@@ -1,0 +1,141 @@
+Here are the 3 files as requested:
+
+**main.tf**
+```terraform
+# Configure the Azure Provider
+provider "azure" {
+  version = "2.34.0"
+  subscription_id = var.subscription_id
+  tenant_id       = var.tenant_id
+  client_id       = var.client_id
+  client_secret   = var.client_secret
+}
+
+# Create an App Service Plan
+resource "azurerm_app_service_plan" "example" {
+  name                = "example-app-service-plan"
+  location            = "West US"
+  resource_group_name = "example-resource-group"
+  kind                = "linux"
+  reserved            = true
+
+  sku {
+    tier = "Standard"
+    size = "S1"
+  }
+}
+
+# Create a Development Web App
+resource "azurerm_app_service" "dev" {
+  name                = "example-dev-webapp"
+  location            = azurerm_app_service_plan.example.location
+  resource_group_name = azurerm_app_service_plan.example.resource_group_name
+  app_service_plan_name = azurerm_app_service_plan.example.name
+
+  site_config {
+    dotnet_framework_version = "v4.0"
+    python_version          = "3.9"
+  }
+}
+
+# Create a Staging Web App
+resource "azurerm_app_service" "staging" {
+  name                = "example-staging-webapp"
+  location            = azurerm_app_service_plan.example.location
+  resource_group_name = azurerm_app_service_plan.example.resource_group_name
+  app_service_plan_name = azurerm_app_service_plan.example.name
+
+  site_config {
+    dotnet_framework_version = "v4.0"
+    python_version          = "3.9"
+  }
+}
+```
+
+**azure-pipelines.yml**
+```yaml
+trigger:
+- main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  terraform_credential: 'example-terraform-credential'
+
+stages:
+- build
+- deploy
+
+build:
+  stage: build
+  displayName: 'Build'
+  jobs:
+  - job: build
+    steps:
+    - task: TerraformTask@0
+      displayName: 'Terraform Init'
+      inputs:
+        command: 'init'
+        workingDirectory: '$(System.ArtifactsDirectory)'
+        backendService: 'terraform_sc'
+        backendConfig: 'terraform.tfstate'
+
+    - task: TerraformTask@0
+      displayName: 'Terraform Plan'
+      inputs:
+        command: 'plan'
+        workingDirectory: '$(System.ArtifactsDirectory)'
+        varFiles: '**/terraform.tfvars'
+
+    - task: TerraformTask@0
+      displayName: 'Terraform Apply'
+      inputs:
+        command: 'apply'
+        workingDirectory: '$(System.ArtifactsDirectory)'
+        varFiles: '**/terraform.tfvars'
+
+deploy:
+  stage: deploy
+  displayName: 'Deploy'
+  jobs:
+  - job: deploy
+    steps:
+    - task: AzureAppServiceDeployment@1
+      displayName: 'Deploy to Dev'
+      inputs:
+        azureResourceGroup: 'example-resource-group'
+        azureAppServiceName: 'example-dev-webapp'
+        package: '**/*.zip'
+        deploymentType: 'zipDeploy'
+
+    - task: AzureAppServiceDeployment@1
+      displayName: 'Deploy to Staging'
+      inputs:
+        azureResourceGroup: 'example-resource-group'
+        azureAppServiceName: 'example-staging-webapp'
+        package: '**/*.zip'
+        deploymentType: 'zipDeploy'
+        slot: 'staging'
+
+condition: and(succeeded('build'), eq(variables['Build.SourceBranch'], 'refs/heads/staging'))
+```
+
+**app.py**
+```python
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route('/')
+def hello_world():
+    if 'STAGING' in os.environ:
+        return 'Hello from Staging'
+    else:
+        return 'Hello from Dev'
+
+if __name__ == '__main__':
+    app.run()
+```
+
+Note that you'll need to replace the placeholders in `main.tf` (e.g. `subscription_id`, `tenant_id`, `client_id`, `client_secret`) with your actual Azure credentials. You'll also need to create a Terraform backend configuration in Azure Storage and a variable group in Azure DevOps with the `terraform_credential` variable.
